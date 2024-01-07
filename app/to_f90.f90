@@ -1,12 +1,13 @@
 program to_f90
 
-    use implicit
+    use to_f90_implicit
     ! jbdv: replaced the explicit interface block within, and external
     ! procedures at the end of this program, with a module called `interfaced`.
     ! `use`'ing the module here. may be a glaring oversight, but i don't see any
     ! reason for not doing so?
-    use interfaced
-
+    use to_f90_interfaced
+    use to_f90_command_line, only: command_line_type
+    use to_f90_string, only: split
     implicit none
 
     type :: code
@@ -40,659 +41,650 @@ program to_f90
                            first_decl, last_decl, start_prog_unit, end_prog_unit
     logical :: asterisk, ok, data_stmnt, first_arg, continuation
     type(argument), pointer :: arg_start, arg, last_arg
+    type(command_line_type) :: command_line
+    character(:), allocatable :: split_text(:)
+
+    call command_line%parse()
+    call split(command_line%input_file, ".f", split_text)
+
+    f77_name = command_line%input_file
+    if (len_trim(f77_name) == 0) stop
+    open (8, file=f77_name, status='old', iostat=iostatus)
+    if (iostatus /= 0) then
+        write (*, *) '** unable to open file: ', f77_name
+        stop
+    end if
+
+    f90_name = trim(split_text(1))//'.f90'
+    open (9, file=f90_name)
+
+    ! set up a linked list containing the lines of code
+
+    nullify (head, tail)
+    allocate (head)
+    tail => head
+    read (8, '(a)') head%text
+    if (head%text(1:1) == 'c' .or. head%text(1:1) == 'c' .or. head%text(1:1) == '*') &
+        then
+        head%text(1:1) = '!'
+    else if (head%text(1:1) == tab) then
+        head%text = '      '//head%text(2:)
+    end if
+    head%label = ' '
+    count = 1
 
     do
-        write (*, '(a)', advance='no') ' enter name of fortran source file: '
-        read (*, '(a)', iostat=iostatus) f77_name
-        if (iostatus < 0) stop           ! halts gracefully when the names are
-        ! read from a file and the end is reached
+        nullify (current)
+        allocate (current)
+        read (8, '(a)', iostat=iostatus) current%text
+        if (iostatus /= 0) exit
 
-        if (len_trim(f77_name) == 0) cycle
-        if (index(f77_name, '.') == 0) then
-            last = len_trim(f77_name)
-            f77_name(last + 1:last + 4) = '.for'
+        ! change c, c or * in column 1 to !
+        if (current%text(1:1) == 'c' .or. current%text(1:1) == 'c' .or. &
+            current%text(1:1) == '*') then
+            if (len_trim(current%text) > 1) then
+                current%text(1:1) = '!'
+            else
+                current%text = ' '       ! leave blank if nothing else on line
+            end if
+            current%label = ' '
+        else
+            current%label = adjustl(current%text(1:5))
         end if
-        open (8, file=f77_name, status='old', iostat=iostatus)
-        if (iostatus /= 0) then
-            write (*, *) '** unable to open file: ', f77_name
-            cycle
+
+        count = count + 1
+        if (current%label(1:1) == tab) then ! expand tabs
+            current%label = ' '
+            current%text = '      '//current%text(2:)
+        else if (current%label(1:1) == '!') then
+            current%label = ' '
+        else
+            current%label = adjustl(current%label)
         end if
 
-        pos = index(f77_name, '.', back=.true.) ! added back=.true. for unix
-        ! names e.g. prog.test.f
-        f90_name = f77_name(1:pos)//'f90'
-        open (9, file=f90_name)
+        nullify (current%next)
+        tail%next => current
+        tail => current
+    end do
 
-        ! set up a linked list containing the lines of code
+    write (*, *) 'no. of lines read =', count
 
-        nullify (head, tail)
-        allocate (head)
-        tail => head
-        read (8, '(a)') head%text
-        if (head%text(1:1) == 'c' .or. head%text(1:1) == 'c' .or. head%text(1:1) == '*') &
-            then
-            head%text(1:1) = '!'
-        else if (head%text(1:1) == tab) then
-            head%text = '      '//head%text(2:)
+    ! ---------------------------------------------------------------------------
+
+    current => head
+    nullify (last_line)
+    data_stmnt = .false.
+
+    do
+        ! look for blanks in columns 1-5 followed by non-blank in column 6.
+        ! if found, add an ampersand at the end of the previous line.
+
+        if (current%label == '     ' .and. current%text(6:6) /= ' ' .and. &
+            current%text(1:1) /= '!') then
+            last = len_trim(last_line%text)
+            last_line%text(last + 3:last + 3) = '&'
+            current%text(6:6) = ' '
+            continuation = .true.
+        else
+            data_stmnt = .false.
+            continuation = .false.
         end if
-        head%label = ' '
-        count = 1
 
+        ! replace tabs with single spaces
         do
-            nullify (current)
-            allocate (current)
-            read (8, '(a)', iostat=iostatus) current%text
-            if (iostatus /= 0) exit
-
-            ! change c, c or * in column 1 to !
-            if (current%text(1:1) == 'c' .or. current%text(1:1) == 'c' .or. &
-                current%text(1:1) == '*') then
-                if (len_trim(current%text) > 1) then
-                    current%text(1:1) = '!'
-                else
-                    current%text = ' '       ! leave blank if nothing else on line
-                end if
-                current%label = ' '
-            else
-                current%label = adjustl(current%text(1:5))
-            end if
-
-            count = count + 1
-            if (current%label(1:1) == tab) then ! expand tabs
-                current%label = ' '
-                current%text = '      '//current%text(2:)
-            else if (current%label(1:1) == '!') then
-                current%label = ' '
-            else
-                current%label = adjustl(current%label)
-            end if
-
-            nullify (current%next)
-            tail%next => current
-            tail => current
+            pos = index(current%text, tab)
+            if (pos == 0) exit
+            current%text(pos:pos) = ' '
         end do
 
-        write (*, *) 'no. of lines read =', count
+        ! remove leading blanks
+        current%text = adjustl(current%text)
 
-        ! ---------------------------------------------------------------------------
+        ! mark regions of text which must not have their case changed.
+        call mark_text(current%text, n_marks, pos1, pos2, continuation)
 
-        current => head
-        nullify (last_line)
-        data_stmnt = .false.
+        ! convert cases of regions which are not protected.
+        call convert_text(current%text, n_marks, pos1, pos2)
 
-        do
-            ! look for blanks in columns 1-5 followed by non-blank in column 6.
-            ! if found, add an ampersand at the end of the previous line.
+        ! if line is start of a program unit, record its name
+        if (current%text(1:7) == 'program') then
+            prog_unit_name = current%text(1:50)
+        else if (current%text(1:10) == 'subroutine') then
+            pos = index(current%text, '(') - 1
+            if (pos < 0) pos = len_trim(current%text)
+            prog_unit_name = current%text(1:pos)
+        else if (current%text(1:9) == 'blockdata') then
+            prog_unit_name = current%text(1:50)
+        else
+            ! n.b. 'function' could be part of a comment
+            pos = index(current%text, 'function')
+            if (pos > 0 .and. index(current%text, '!') == 0 .and. &
+                index(current%text, '''') == 0) then
+                last = index(current%text, '(') - 1
+                if (last < 0) last = len_trim(current%text)
+                prog_unit_name = current%text(pos:last)
+            end if
+        end if
 
-            if (current%label == '     ' .and. current%text(6:6) /= ' ' .and. &
-                current%text(1:1) /= '!') then
-                last = len_trim(last_line%text)
-                last_line%text(last + 3:last + 3) = '&'
-                current%text(6:6) = ' '
-                continuation = .true.
-            else
-                data_stmnt = .false.
-                continuation = .false.
+        ! if first word is one of integer, real, double precision, character ,
+        ! logical or complex, add :: unless function appears on the same line
+        ! or next non-blank character is '*' as in real*8.
+        if (index(current%text, 'function') == 0) then
+            pos = 0
+            if (index(current%text, 'integer') == 1) then
+                pos = 9
+            else if (index(current%text, 'real') == 1) then
+                pos = 6
+            else if (index(current%text, 'double precision') == 1) then
+                pos = 18
+            else if (index(current%text, 'character') == 1) then
+                pos = 11
+            else if (index(current%text, 'complex') == 1) then
+                pos = 9
+            else if (index(current%text, 'logical') == 1) then
+                pos = 9
             end if
 
-            ! replace tabs with single spaces
-            do
-                pos = index(current%text, tab)
-                if (pos == 0) exit
-                current%text(pos:pos) = ' '
-            end do
-
-            ! remove leading blanks
-            current%text = adjustl(current%text)
-
-            ! mark regions of text which must not have their case changed.
-            call mark_text(current%text, n_marks, pos1, pos2, continuation)
-
-            ! convert cases of regions which are not protected.
-            call convert_text(current%text, n_marks, pos1, pos2)
-
-            ! if line is start of a program unit, record its name
-            if (current%text(1:7) == 'program') then
-                prog_unit_name = current%text(1:50)
-            else if (current%text(1:10) == 'subroutine') then
-                pos = index(current%text, '(') - 1
-                if (pos < 0) pos = len_trim(current%text)
-                prog_unit_name = current%text(1:pos)
-            else if (current%text(1:9) == 'blockdata') then
-                prog_unit_name = current%text(1:50)
-            else
-                ! n.b. 'function' could be part of a comment
-                pos = index(current%text, 'function')
-                if (pos > 0 .and. index(current%text, '!') == 0 .and. &
-                    index(current%text, '''') == 0) then
-                    last = index(current%text, '(') - 1
-                    if (last < 0) last = len_trim(current%text)
-                    prog_unit_name = current%text(pos:last)
-                end if
-            end if
-
-            ! if first word is one of integer, real, double precision, character ,
-            ! logical or complex, add :: unless function appears on the same line
-            ! or next non-blank character is '*' as in real*8.
-            if (index(current%text, 'function') == 0) then
-                pos = 0
-                if (index(current%text, 'integer') == 1) then
-                    pos = 9
-                else if (index(current%text, 'real') == 1) then
-                    pos = 6
-                else if (index(current%text, 'double precision') == 1) then
-                    pos = 18
-                else if (index(current%text, 'character') == 1) then
-                    pos = 11
-                else if (index(current%text, 'complex') == 1) then
-                    pos = 9
-                else if (index(current%text, 'logical') == 1) then
-                    pos = 9
-                end if
-
-                if (pos > 0) then
-                    asterisk = index(current%text(pos - 1:pos), '*') > 0
-                    if (.not. asterisk) then
-                        if (pos /= 11) then
-                            current%text = current%text(1:pos - 1)//':: '// &
-                                           adjustl(current%text(pos:))
-                        else                   ! character type, default length = 1
-                            current%text = 'character (len=1) :: '// &
-                                           adjustl(current%text(pos:))
-                        end if
-                    else
-                        if (pos == 11) then      ! character * found
-                            i1 = index(current%text, '*') + 1
-                            length = len_trim(current%text)
-                            ! get length, could be (*)
-                            do
-                                if (current%text(i1:i1) /= ' ') exit
-                                if (i1 >= length) exit
-                                i1 = i1 + 1
-                            end do
-                            if (current%text(i1:i1) == '(') then
-                                i1 = i1 + 1
-                                i2 = index(current%text, ')') - 1
-                            else
-                                i2 = index(current%text(i1:), ' ') + i1 - 2
-                            end if
-                            current%text = 'character (len='//current%text(i1:i2)// &
-                                           ') :: '//adjustl(current%text(i2 + 2:))
-                        end if
+            if (pos > 0) then
+                asterisk = index(current%text(pos - 1:pos), '*') > 0
+                if (.not. asterisk) then
+                    if (pos /= 11) then
+                        current%text = current%text(1:pos - 1)//':: '// &
+                                       adjustl(current%text(pos:))
+                    else                   ! character type, default length = 1
+                        current%text = 'character (len=1) :: '// &
+                                       adjustl(current%text(pos:))
                     end if
-                    ! check for 2 or more lengths in character declaration.
-                    ! e.g. character a, b, c*10, d
-                    ! put 2nd (& later) declarations on separate lines:
-                    ! character*10 c
-                    ! but check for character*10 a(*) where last * is not a
-                    ! length but a dimension
-                    if (pos == 11) then
-                        pos = index(current%text, '::') + 2
+                else
+                    if (pos == 11) then      ! character * found
+                        i1 = index(current%text, '*') + 1
+                        length = len_trim(current%text)
+                        ! get length, could be (*)
                         do
-                            i = index(current%text(pos:), '*')
-                            if (i == 0) exit
-                            i = i + pos - 1
-                            length = len_trim(current%text)
-                            i1 = index(current%text(:i - 1), ',', back=.true.)
-                            i1 = max(pos, i1)
-                            i2 = index(current%text(i + 1:), ',')
+                            if (current%text(i1:i1) /= ' ') exit
+                            if (i1 >= length) exit
+                            i1 = i1 + 1
+                        end do
+                        if (current%text(i1:i1) == '(') then
+                            i1 = i1 + 1
+                            i2 = index(current%text, ')') - 1
+                        else
+                            i2 = index(current%text(i1:), ' ') + i1 - 2
+                        end if
+                        current%text = 'character (len='//current%text(i1:i2)// &
+                                       ') :: '//adjustl(current%text(i2 + 2:))
+                    end if
+                end if
+                ! check for 2 or more lengths in character declaration.
+                ! e.g. character a, b, c*10, d
+                ! put 2nd (& later) declarations on separate lines:
+                ! character*10 c
+                ! but check for character*10 a(*) where last * is not a
+                ! length but a dimension
+                if (pos == 11) then
+                    pos = index(current%text, '::') + 2
+                    do
+                        i = index(current%text(pos:), '*')
+                        if (i == 0) exit
+                        i = i + pos - 1
+                        length = len_trim(current%text)
+                        i1 = index(current%text(:i - 1), ',', back=.true.)
+                        i1 = max(pos, i1)
+                        i2 = index(current%text(i + 1:), ',')
+                        if (i2 == 0) then
+                            i2 = length + 1
+                        else
+                            i2 = i2 + i
+                        end if
+                        ! i1, i2 mark commas at beginning & end of `, name*xx,'
+                        ! but we could have `name(xx, *), '
+                        ! test for * after ( , or ) before ,
+                        i3 = index(current%text(i1:i2), '(')
+                        i4 = index(current%text(i1:), ')')
+                        if (i3 > 0) then
+                            i4 = i4 + i1 - 1
+                            i2 = index(current%text(i4 + 1:), ',')
                             if (i2 == 0) then
                                 i2 = length + 1
                             else
-                                i2 = i2 + i
+                                i2 = i2 + i4
                             end if
-                            ! i1, i2 mark commas at beginning & end of `, name*xx,'
-                            ! but we could have `name(xx, *), '
-                            ! test for * after ( , or ) before ,
-                            i3 = index(current%text(i1:i2), '(')
-                            i4 = index(current%text(i1:), ')')
-                            if (i3 > 0) then
-                                i4 = i4 + i1 - 1
-                                i2 = index(current%text(i4 + 1:), ',')
-                                if (i2 == 0) then
-                                    i2 = length + 1
-                                else
-                                    i2 = i2 + i4
-                                end if
-                                pos = i2 + 1
-                                cycle
-                            else if (i4 > 0) then
-                                i4 = i4 + i1 - 1
-                                i2 = index(current%text(i4 + 1:), ',')
-                                if (i2 == 0) then
-                                    i2 = length + 1
-                                else
-                                    i2 = i2 + i4
-                                end if
-                                pos = i2 + 1
-                                cycle
-                            end if
-
-                            if (i1 == pos .and. i2 == length + 1) then
-                                ! only one declaration left on line, e.g.
-                                ! character :: name*50
-                                current%text = 'character (len='//current%text(i + 1:length) &
-                                               //') :: '//adjustl(current%text(i1:i - 1))
-                                exit
-                            end if
-
-                            allocate (next_line)
-                            next_line%next => current%next
-                            current%next => next_line
-                            next_line%text = 'character'//current%text(i:i2 - 1)//' '// &
-                                             current%text(i1 + 1:i - 1)
-                            if (i2 < length) then
-                                current%text = current%text(:i1)//current%text(i2 + 1:length)
+                            pos = i2 + 1
+                            cycle
+                        else if (i4 > 0) then
+                            i4 = i4 + i1 - 1
+                            i2 = index(current%text(i4 + 1:), ',')
+                            if (i2 == 0) then
+                                i2 = length + 1
                             else
-                                current%text = current%text(:i1 - 1)
+                                i2 = i2 + i4
                             end if
-                        end do
-                    end if
-                end if
-            end if
-
-            ! if this is in a data statement, eliminate any blanks within numbers
-            if (data_stmnt .or. current%text(1:4) == 'data') then
-                call remove_data_blanks(current%text)
-                last = len_trim(current%text)
-                data_stmnt = .true.
-            end if
-
-            ! if line only contains 'end', add the program unit name
-            if (len_trim(current%text) == 3 .and. current%text(1:3) == 'end') then
-                current%text = current%text(1:3)//' '//prog_unit_name
-                prog_unit_name = ' '
-
-                ! convert `enddo' to 'end do'
-            else if (current%text(1:5) == 'enddo') then
-                current%text = 'end do'//current%text(6:)
-            end if
-
-            last_line => current
-            if (associated(current, tail)) exit
-            if (.not. associated(current)) exit
-            current => current%next
-        end do
-
-        ! -------------------------------------------------------------------------
-
-        ! now convert do-loops
-
-        current => head
-        write (*, *) '      converting do-loops, 3-way ifs, & computed go tos'
-        do
-            if (current%text(1:1) /= '!' .and. current%text(1:1) /= ' ') then
-                pos = index(current%text, 'do')
-                if (pos > 0 .and. (current%text(pos + 2:pos + 2) == ' ' .or. current%text(pos + &
-                                                                                          2:pos + 2) == ',')) then
-                    if (current%text(pos + 2:pos + 2) == ',') current%text(pos + 2:pos + 2) = ' '
-                    if (pos == 1) then
-                        ok = .true.
-                    else if (scan(current%text(pos - 1:pos - 1), delimiters) > 0) then
-                        ok = index(current%text(:pos - 1), 'end ') == 0
-                    else
-                        ok = .false.
-                    end if
-                    if (ok) then
-                        text = adjustl(current%text(pos + 3:))
-                        last = index(text, ' ')
-                        lab = text(:last - 1)
-                        if (scan(lab(1:1), numbers) == 0) lab = ' '
-                        lab_length = len_trim(lab)
-                        if (lab_length > 0) then
-                            pos = index(lab, ',') ! check for a comma after label
-                            if (pos > 0) then
-                                lab(pos:) = ' '
-                                i = index(current%text, ',')
-                                current%text(i:i) = ' '
-                                lab_length = pos - 1
-                            end if
-                            call do_loop_fixup(current, lab)
-                        end if
-                    end if
-
-                    ! test for computed go to
-                else if (index(current%text, 'go to') > 0) then
-                    i1 = index(current%text, 'go to')
-                    statement = adjustl(current%text(i1 + 5:))
-                    ! test for a `('
-                    if (statement(1:1) == '(') then
-                        ok = .true.
-                        ! if current line is continued, try appending
-                        ! the next line
-                        if (last_char(statement) == '&') then
-                            next_line => current%next
-                            length = len_trim(statement) + len_trim(next_line%text)
-                            ok = (length <= 141) .and. (last_char(next_line%text) /= '&')
-                            if (ok) then
-                                pos = len_trim(statement)
-                                statement = trim(statement(:pos - 1))//trim(next_line%text)
-                                current%next => next_line%next
-                                deallocate (next_line)
-                            end if
+                            pos = i2 + 1
+                            cycle
                         end if
 
-                        if (ok) then
-                            ! check for comma between ( and )
-                            pos = index(statement, ')')
-                            if (index(statement(2:pos - 1), ',') > 0) then
-                                ! we could have something like:
-                                ! if (condition) go to (100, 200, 300) ivar
-                                ! before doing any more, split into 3 lines:
-                                ! if (condition) then
-                                ! go to (100, 200, 300) ivar
-                                ! end if
-                                if (current%text(1:2) == 'if') then
-                                    if (current%text(3:3) == ' ' .or. current%text(3:3) == '(') then
-                                        current%text = current%text(:i1 - 1)//'then'
-                                        i1 = 2
-                                        call insert_and_moveto_newline(current)
-                                        current%text = ' '
-                                        next_line => current
-                                        call insert_and_moveto_newline(next_line)
-                                        next_line%text = 'end if'
-                                    end if
-                                end if
-                                ! get the case variable or expression
-                                case_expr = adjustl(statement(pos + 1:))
-                                if (case_expr(1:1) == ',') case_expr = adjustl(case_expr(2:))
-                                current%text = current%text(:i1 - 1)//'select case ( '// &
-                                               trim(case_expr)//' )'
-                                ! put in pairs of lines:  case ( i )
-                                ! go to i-th label
-                                call goto_cases(statement(2:pos - 1))
-                            end if
-                        end if
-                    end if
-
-                    ! look for if, then a number as last non-blank character
-                else
-                    pos = index(current%text, 'if')
-                    if (pos > 0) then
-                        last = len_trim(current%text)
-                        if (scan(current%text(last:last), numbers) > 0) then
-                            call fix_3way_if(current)
-                        end if
-                    end if
-                end if
-            end if
-
-            if (associated(current, tail)) exit
-            if (.not. associated(current)) exit
-            current => current%next
-        end do
-
-        ! -------------------------------------------------------------------------
-
-        ! determine intents for dummy arguments
-
-        write (*, *) '      determining intents of dummy arguments'
-
-        ! search for either function or subroutine.
-        ! extract name of program unit.
-
-        current => head
-        nullify (last_line)
-        outer_loop: do
-            do
-                if (current%text(1:1) /= '!' .and. current%text(1:1) /= ' ') then
-                    if (current%text(1:10) == 'subroutine') then
-                        pos = index(current%text, '(') - 1
-                        if (pos < 0) pos = len_trim(current%text)
-                        prog_unit_name = current%text(1:pos)
-                        exit
-                    else
-                        pos = index(current%text, 'function')
-                        if (pos > 0) then
-                            last = index(current%text, '(') - 1
-                            if (last < 0) last = len_trim(current%text)
-                            prog_unit_name = current%text(pos:last)
+                        if (i1 == pos .and. i2 == length + 1) then
+                            ! only one declaration left on line, e.g.
+                            ! character :: name*50
+                            current%text = 'character (len='//current%text(i + 1:length) &
+                                           //') :: '//adjustl(current%text(i1:i - 1))
                             exit
                         end if
-                    end if
-                end if
 
-                last_line => current
-                current => current%next
-                if (associated(current, tail)) exit outer_loop
-            end do
-
-            ! if there is no blank line between this program unit and the previous
-            ! one, then insert one.
-
-            if (associated(last_line)) then
-                if (len_trim(last_line%text) > 0) then
-                    call insert_and_moveto_newline(last_line)
-                    last_line%text = ' '
-                end if
-            end if
-
-            allocate (start_prog_unit)
-            start_prog_unit => current
-
-            ! find end of program unit
-
-            do
-                current => current%next
-                if (current%text(1:1) /= '!' .and. current%text(1:1) /= ' ') then
-                    if (current%text(1:3) == 'end') then
-                        if (index(current%text(5:), prog_unit_name) > 0) then
-                            allocate (end_prog_unit)
-                            end_prog_unit => current
-                            exit
-                        end if
-                    end if
-                end if
-                if (associated(current, tail)) exit outer_loop
-            end do
-
-            ! find first & last declarations
-
-            allocate (first_decl, last_decl)
-            call find_declarations(start_prog_unit, end_prog_unit, first_decl, &
-                                   last_decl)
-            if (.not. associated(last_decl)) go to 100
-
-            ! extract list of dummy arguments
-
-            call get_arg_list()
-            if (numb_arg == 0) go to 100
-
-            ! see if the declarations contain any implicit statements
-
-            call reset_defaults()
-            current => first_decl
-            do
-                if (current%text(1:8) == 'implicit') then
-                    statement = current%text(10:)
-                    call set_implicit_types(statement)
-                end if
-                if (associated(current, last_decl)) exit
-                current => current%next
-            end do
-
-            ! search through the declarations for variable types & dimensions
-
-            call get_var_types()
-
-            ! search through rest of code to try to determine the intents
-
-            call get_intents()
-
-            ! insert intent statements
-
-            statement = first_decl%text
-            first_decl%text = ' '
-            current => first_decl
-            arg => arg_start
-            do
-                call insert_and_moveto_newline(current)
-                current%text = arg%var_type
-                select case (arg%intention)
-                case (0, 3)
-                    current%text = trim(current%text)//', intent(in out)'
-                case (1)
-                    current%text = trim(current%text)//', intent(in)'
-                case (2)
-                    current%text = trim(current%text)//', intent(out)'
-                end select
-                current%text = current%text(:41)//':: '//arg%name
-                if (arg%dim > 0) current%text = trim(current%text)//arg%dimensions
-
-                if (associated(arg, last_arg)) exit
-                arg => arg%next
-            end do
-            call insert_and_moveto_newline(current)
-            current%text = statement
-
-            ! search for, and convert, any parameter statements
-
-            current => first_decl
-            do
-                if (current%text(1:9) == 'parameter') then
-                    call convert_parameter(current)
-                end if
-                if (associated(current, last_decl)) exit
-                current => current%next
-            end do
-
-            ! insert a blank line after the last declaration if there is not one
-            ! there already, or a comment.
-
-            next_line => last_decl%next
-            if (next_line%text(1:1) /= ' ' .and. next_line%text(1:1) /= '!') then
-                call insert_and_moveto_newline(last_decl)
-                last_decl%text = ' '
-            end if
-
-            ! move onto the next subroutine or function
-
-100         current => end_prog_unit
-            if (associated(current, tail)) exit
-            last_line => current
-            current => current%next
-            if (associated(current, tail)) exit
-        end do outer_loop
-
-        ! -------------------------------------------------------------------------
-
-        ! indenting and writing output file
-
-        ! output header line & any continuation lines
-
-        current => head
-        continuation = .false.
-        do
-            if (continuation) then
-                write (9, '(t9, a)') trim(current%text)
-            else
-                write (9, '(a)') trim(current%text)
-            end if
-            ch = last_char(current%text)
-            current => current%next
-            if (ch /= '&') exit
-            continuation = .true.
-        end do
-        ! date & time stamp
-        call date_and_time(date, time)
-        if (ch /= ' ') write (9, *)
-        write (9, '("! code converted using to_f90 by alan miller")')
-        write (9, '("! date: ", a4, "-", a2, "-", a2, "  time: ", a2, &
-          &":", a2,      ":", a2)') date(1:4), date(5:6), date(7:8), time(1:2), &
-          time(3:4), time(5:6)
-        if (len_trim(current%text) > 0) write (9, *)
-
-        indent = 0
-        continuation = .false.
-        write (*, *) '      writing file: ', f90_name
-
-        do
-            if (current%text(1:1) /= '!') then
-                if (index(current%text, 'end ') > 0) then
-                    if (index(current%text, 'end select') == 0) indent = max(indent - 2, 0)
-                    write (9, '(a)') blank(:indent)//trim(current%text)
-                    continuation = (last_char(current%text) == '&')
-                else if (index(current%text, 'do ') > 0) then
-                    write (9, '(a)') blank(:indent)//trim(current%text)
-                    continuation = (last_char(current%text) == '&')
-                    indent = indent + 2
-                    ! temporary reduction in
-                    ! indentation for `else'
-                else if (index(current%text, 'else') > 0) then
-                    last = max(0, indent - 2)
-                    write (9, '(a)') blank(:last)//trim(current%text)
-                    continuation = (last_char(current%text) == '&')
-                    ! indent increased if `if'
-                    ! is followed by `then'
-                else if (index(current%text, 'if ') > 0 .or. index(current%text, 'if(') > 0) &
-                    then
-                    current%text = blank(:indent)//trim(current%text)
-                    ! if if statement runs onto
-                    ! next line, try joining
-                    last = len_trim(current%text)
-                    if (current%text(last:last) == '&') then
-                        next_line => current%next
-                        if (last + len_trim(next_line%text) < 80) then
-                            current%text(last:last) = ' '
-                            current%text = trim(current%text)//' '//trim(next_line%text)
-                            current%next => next_line%next
-                        end if
-                    end if
-
-                    write (9, '(a)') trim(current%text)
-                    continuation = (last_char(current%text) == '&')
-                    next_line => current
-                    do
-                        if (index(next_line%text, ' then') > 0 .or. &
-                            index(next_line%text, ')then') > 0) then
-                            indent = indent + 2
-                            exit
+                        allocate (next_line)
+                        next_line%next => current%next
+                        current%next => next_line
+                        next_line%text = 'character'//current%text(i:i2 - 1)//' '// &
+                                         current%text(i1 + 1:i - 1)
+                        if (i2 < length) then
+                            current%text = current%text(:i1)//current%text(i2 + 1:length)
                         else
-                            if (last_char(next_line%text) /= '&') exit
+                            current%text = current%text(:i1 - 1)
                         end if
-                        next_line => next_line%next
                     end do
-                else
-
-                    ! if line ends with '&', attempt to join on the next line if it is
-                    ! short.
-
-                    last = len_trim(current%text)
-                    if (last > 0) then
-                        if (current%text(last:last) == '&') then
-                            last = len_trim(current%text(:last - 1))
-                            next_line => current%next
-                            if (last + indent + len_trim(next_line%text) < 78) then
-                                current%text = current%text(:last)//' '// &
-                                               trim(next_line%text)
-                                current%next => next_line%next
-                                deallocate (next_line)
-                            end if
-                        end if
-                    end if
-
-                    if (continuation) then
-                        write (9, '(a)') blank(:indent + 4)//trim(current%text)
-                    else
-                        write (9, '(a)') blank(:indent)//trim(current%text)
-                    end if
-                    continuation = (last_char(current%text) == '&')
                 end if
-                ! comment line (unchanged)
-            else
-                write (9, '(a)') trim(current%text)
-                continuation = .false.
             end if
-            if (associated(current, tail)) exit
-            if (.not. associated(current)) exit
-            current => current%next
-        end do
+        end if
 
-        close (8)
-        close (9)
+        ! if this is in a data statement, eliminate any blanks within numbers
+        if (data_stmnt .or. current%text(1:4) == 'data') then
+            call remove_data_blanks(current%text)
+            last = len_trim(current%text)
+            data_stmnt = .true.
+        end if
+
+        ! if line only contains 'end', add the program unit name
+        if (len_trim(current%text) == 3 .and. current%text(1:3) == 'end') then
+            current%text = current%text(1:3)//' '//prog_unit_name
+            prog_unit_name = ' '
+
+            ! convert `enddo' to 'end do'
+        else if (current%text(1:5) == 'enddo') then
+            current%text = 'end do'//current%text(6:)
+        end if
+
+        last_line => current
+        if (associated(current, tail)) exit
+        if (.not. associated(current)) exit
+        current => current%next
     end do
 
-    stop
+    ! -------------------------------------------------------------------------
+
+    ! now convert do-loops
+
+    current => head
+    write (*, *) '      converting do-loops, 3-way ifs, & computed go tos'
+    do
+        if (current%text(1:1) /= '!' .and. current%text(1:1) /= ' ') then
+            pos = index(current%text, 'do')
+            if (pos > 0 .and. (current%text(pos + 2:pos + 2) == ' ' .or. current%text(pos + &
+                                                                                      2:pos + 2) == ',')) then
+                if (current%text(pos + 2:pos + 2) == ',') current%text(pos + 2:pos + 2) = ' '
+                if (pos == 1) then
+                    ok = .true.
+                else if (scan(current%text(pos - 1:pos - 1), delimiters) > 0) then
+                    ok = index(current%text(:pos - 1), 'end ') == 0
+                else
+                    ok = .false.
+                end if
+                if (ok) then
+                    text = adjustl(current%text(pos + 3:))
+                    last = index(text, ' ')
+                    lab = text(:last - 1)
+                    if (scan(lab(1:1), numbers) == 0) lab = ' '
+                    lab_length = len_trim(lab)
+                    if (lab_length > 0) then
+                        pos = index(lab, ',') ! check for a comma after label
+                        if (pos > 0) then
+                            lab(pos:) = ' '
+                            i = index(current%text, ',')
+                            current%text(i:i) = ' '
+                            lab_length = pos - 1
+                        end if
+                        call do_loop_fixup(current, lab)
+                    end if
+                end if
+
+                ! test for computed go to
+            else if (index(current%text, 'go to') > 0) then
+                i1 = index(current%text, 'go to')
+                statement = adjustl(current%text(i1 + 5:))
+                ! test for a `('
+                if (statement(1:1) == '(') then
+                    ok = .true.
+                    ! if current line is continued, try appending
+                    ! the next line
+                    if (last_char(statement) == '&') then
+                        next_line => current%next
+                        length = len_trim(statement) + len_trim(next_line%text)
+                        ok = (length <= 141) .and. (last_char(next_line%text) /= '&')
+                        if (ok) then
+                            pos = len_trim(statement)
+                            statement = trim(statement(:pos - 1))//trim(next_line%text)
+                            current%next => next_line%next
+                            deallocate (next_line)
+                        end if
+                    end if
+
+                    if (ok) then
+                        ! check for comma between ( and )
+                        pos = index(statement, ')')
+                        if (index(statement(2:pos - 1), ',') > 0) then
+                            ! we could have something like:
+                            ! if (condition) go to (100, 200, 300) ivar
+                            ! before doing any more, split into 3 lines:
+                            ! if (condition) then
+                            ! go to (100, 200, 300) ivar
+                            ! end if
+                            if (current%text(1:2) == 'if') then
+                                if (current%text(3:3) == ' ' .or. current%text(3:3) == '(') then
+                                    current%text = current%text(:i1 - 1)//'then'
+                                    i1 = 2
+                                    call insert_and_moveto_newline(current)
+                                    current%text = ' '
+                                    next_line => current
+                                    call insert_and_moveto_newline(next_line)
+                                    next_line%text = 'end if'
+                                end if
+                            end if
+                            ! get the case variable or expression
+                            case_expr = adjustl(statement(pos + 1:))
+                            if (case_expr(1:1) == ',') case_expr = adjustl(case_expr(2:))
+                            current%text = current%text(:i1 - 1)//'select case ( '// &
+                                           trim(case_expr)//' )'
+                            ! put in pairs of lines:  case ( i )
+                            ! go to i-th label
+                            call goto_cases(statement(2:pos - 1))
+                        end if
+                    end if
+                end if
+
+                ! look for if, then a number as last non-blank character
+            else
+                pos = index(current%text, 'if')
+                if (pos > 0) then
+                    last = len_trim(current%text)
+                    if (scan(current%text(last:last), numbers) > 0) then
+                        call fix_3way_if(current)
+                    end if
+                end if
+            end if
+        end if
+
+        if (associated(current, tail)) exit
+        if (.not. associated(current)) exit
+        current => current%next
+    end do
+
+    ! -------------------------------------------------------------------------
+
+    ! determine intents for dummy arguments
+
+    write (*, *) '      determining intents of dummy arguments'
+
+    ! search for either function or subroutine.
+    ! extract name of program unit.
+
+    current => head
+    nullify (last_line)
+    outer_loop: do
+        do
+            if (current%text(1:1) /= '!' .and. current%text(1:1) /= ' ') then
+                if (current%text(1:10) == 'subroutine') then
+                    pos = index(current%text, '(') - 1
+                    if (pos < 0) pos = len_trim(current%text)
+                    prog_unit_name = current%text(1:pos)
+                    exit
+                else
+                    pos = index(current%text, 'function')
+                    if (pos > 0) then
+                        last = index(current%text, '(') - 1
+                        if (last < 0) last = len_trim(current%text)
+                        prog_unit_name = current%text(pos:last)
+                        exit
+                    end if
+                end if
+            end if
+
+            last_line => current
+            current => current%next
+            if (associated(current, tail)) exit outer_loop
+        end do
+
+        ! if there is no blank line between this program unit and the previous
+        ! one, then insert one.
+
+        if (associated(last_line)) then
+            if (len_trim(last_line%text) > 0) then
+                call insert_and_moveto_newline(last_line)
+                last_line%text = ' '
+            end if
+        end if
+
+        allocate (start_prog_unit)
+        start_prog_unit => current
+
+        ! find end of program unit
+
+        do
+            current => current%next
+            if (current%text(1:1) /= '!' .and. current%text(1:1) /= ' ') then
+                if (current%text(1:3) == 'end') then
+                    if (index(current%text(5:), prog_unit_name) > 0) then
+                        allocate (end_prog_unit)
+                        end_prog_unit => current
+                        exit
+                    end if
+                end if
+            end if
+            if (associated(current, tail)) exit outer_loop
+        end do
+
+        ! find first & last declarations
+
+        allocate (first_decl, last_decl)
+        call find_declarations(start_prog_unit, end_prog_unit, first_decl, &
+                               last_decl)
+        if (.not. associated(last_decl)) go to 100
+
+        ! extract list of dummy arguments
+
+        call get_arg_list()
+        if (numb_arg == 0) go to 100
+
+        ! see if the declarations contain any implicit statements
+
+        call reset_defaults()
+        current => first_decl
+        do
+            if (current%text(1:8) == 'implicit') then
+                statement = current%text(10:)
+                call set_implicit_types(statement)
+            end if
+            if (associated(current, last_decl)) exit
+            current => current%next
+        end do
+
+        ! search through the declarations for variable types & dimensions
+
+        call get_var_types()
+
+        ! search through rest of code to try to determine the intents
+
+        call get_intents()
+
+        ! insert intent statements
+
+        statement = first_decl%text
+        first_decl%text = ' '
+        current => first_decl
+        arg => arg_start
+        do
+            call insert_and_moveto_newline(current)
+            current%text = arg%var_type
+            select case (arg%intention)
+            case (0, 3)
+                current%text = trim(current%text)//', intent(in out)'
+            case (1)
+                current%text = trim(current%text)//', intent(in)'
+            case (2)
+                current%text = trim(current%text)//', intent(out)'
+            end select
+            current%text = current%text(:41)//':: '//arg%name
+            if (arg%dim > 0) current%text = trim(current%text)//arg%dimensions
+
+            if (associated(arg, last_arg)) exit
+            arg => arg%next
+        end do
+        call insert_and_moveto_newline(current)
+        current%text = statement
+
+        ! search for, and convert, any parameter statements
+
+        current => first_decl
+        do
+            if (current%text(1:9) == 'parameter') then
+                call convert_parameter(current)
+            end if
+            if (associated(current, last_decl)) exit
+            current => current%next
+        end do
+
+        ! insert a blank line after the last declaration if there is not one
+        ! there already, or a comment.
+
+        next_line => last_decl%next
+        if (next_line%text(1:1) /= ' ' .and. next_line%text(1:1) /= '!') then
+            call insert_and_moveto_newline(last_decl)
+            last_decl%text = ' '
+        end if
+
+        ! move onto the next subroutine or function
+
+100     current => end_prog_unit
+        if (associated(current, tail)) exit
+        last_line => current
+        current => current%next
+        if (associated(current, tail)) exit
+    end do outer_loop
+
+    ! -------------------------------------------------------------------------
+
+    ! indenting and writing output file
+
+    ! output header line & any continuation lines
+
+    current => head
+    continuation = .false.
+    do
+        if (continuation) then
+            write (9, '(t9, a)') trim(current%text)
+        else
+            write (9, '(a)') trim(current%text)
+        end if
+        ch = last_char(current%text)
+        current => current%next
+        if (ch /= '&') exit
+        continuation = .true.
+    end do
+    ! date & time stamp
+    call date_and_time(date, time)
+    if (ch /= ' ') write (9, *)
+    write (9, '("! code converted using to_f90 by alan miller")')
+    write (9, '("! date: ", a4, "-", a2, "-", a2, "  time: ", a2, &
+      &":", a2,      ":", a2)') date(1:4), date(5:6), date(7:8), time(1:2), &
+      time(3:4), time(5:6)
+    if (len_trim(current%text) > 0) write (9, *)
+
+    indent = 0
+    continuation = .false.
+    write (*, *) '      writing file: ', f90_name
+
+    do
+        if (current%text(1:1) /= '!') then
+            if (index(current%text, 'end ') > 0) then
+                if (index(current%text, 'end select') == 0) indent = max(indent - 2, 0)
+                write (9, '(a)') blank(:indent)//trim(current%text)
+                continuation = (last_char(current%text) == '&')
+            else if (index(current%text, 'do ') > 0) then
+                write (9, '(a)') blank(:indent)//trim(current%text)
+                continuation = (last_char(current%text) == '&')
+                indent = indent + 2
+                ! temporary reduction in
+                ! indentation for `else'
+            else if (index(current%text, 'else') > 0) then
+                last = max(0, indent - 2)
+                write (9, '(a)') blank(:last)//trim(current%text)
+                continuation = (last_char(current%text) == '&')
+                ! indent increased if `if'
+                ! is followed by `then'
+            else if (index(current%text, 'if ') > 0 .or. index(current%text, 'if(') > 0) &
+                then
+                current%text = blank(:indent)//trim(current%text)
+                ! if if statement runs onto
+                ! next line, try joining
+                last = len_trim(current%text)
+                if (current%text(last:last) == '&') then
+                    next_line => current%next
+                    if (last + len_trim(next_line%text) < 80) then
+                        current%text(last:last) = ' '
+                        current%text = trim(current%text)//' '//trim(next_line%text)
+                        current%next => next_line%next
+                    end if
+                end if
+
+                write (9, '(a)') trim(current%text)
+                continuation = (last_char(current%text) == '&')
+                next_line => current
+                do
+                    if (index(next_line%text, ' then') > 0 .or. &
+                        index(next_line%text, ')then') > 0) then
+                        indent = indent + 2
+                        exit
+                    else
+                        if (last_char(next_line%text) /= '&') exit
+                    end if
+                    next_line => next_line%next
+                end do
+            else
+
+                ! if line ends with '&', attempt to join on the next line if it is
+                ! short.
+
+                last = len_trim(current%text)
+                if (last > 0) then
+                    if (current%text(last:last) == '&') then
+                        last = len_trim(current%text(:last - 1))
+                        next_line => current%next
+                        if (last + indent + len_trim(next_line%text) < 78) then
+                            current%text = current%text(:last)//' '// &
+                                           trim(next_line%text)
+                            current%next => next_line%next
+                            deallocate (next_line)
+                        end if
+                    end if
+                end if
+
+                if (continuation) then
+                    write (9, '(a)') blank(:indent + 4)//trim(current%text)
+                else
+                    write (9, '(a)') blank(:indent)//trim(current%text)
+                end if
+                continuation = (last_char(current%text) == '&')
+            end if
+            ! comment line (unchanged)
+        else
+            write (9, '(a)') trim(current%text)
+            continuation = .false.
+        end if
+        if (associated(current, tail)) exit
+        if (.not. associated(current)) exit
+        current => current%next
+    end do
+
+    close (8)
+    close (9)
 
 contains
 

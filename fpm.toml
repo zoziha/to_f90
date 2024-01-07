@@ -14,6 +14,10 @@ auto-examples = true
 library = false
 
 [[executable]]
-name="to_f90"
-source-dir="app"
-main="to_f90.f90"
+name = "to_f90"
+source-dir = "app"
+main = "to_f90.f90"
+
+[dependencies]
+argparse-f = { git = "https://gitee.com/zoziha/argparse-f" }
+fortran202x_split = { git = "https://github.com/milancurcic/fortran202x_split" }

@@ -1,4 +1,4 @@
-module interfaced
+module to_f90_interfaced
     ! module containing formely external text processing procedures with explicit
     ! interfaces declared in main program to_f90.
 
@@ -180,8 +180,8 @@ contains
             end if
 
             do
-                if ((text(pos:pos) >= 'a' .and. text(pos:pos) <= 'z') .or. (text( &
-                                                                            pos:pos) >= '0' .and. text(pos:pos) <= '9') .or. text(pos:pos) == '_') &
+                if ((text(pos:pos) >= 'a' .and. text(pos:pos) <= 'z') .or. &
+                    (text(pos:pos) >= '0' .and. text(pos:pos) <= '9') .or. text(pos:pos) == '_') &
                     then
                     pos = pos + 1
                     cycle
@@ -364,4 +364,4 @@ contains
         return
     end function find_delimited_name
 
-end module interfaced
+end module to_f90_interfaced

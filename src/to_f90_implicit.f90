@@ -1,4 +1,4 @@
-module implicit
+module to_f90_implicit
     ! module to set and reset implicit variable types for use by to_f90.
 
     implicit none
@@ -140,4 +140,4 @@ contains
         return
     end function implicit_type
 
-end module implicit
+end module to_f90_implicit
