@@ -2,6 +2,7 @@
 module to_f90_command_line
 
     use argparse, only: argparser
+    use to_f90_filesystem, only: unix_path
     implicit none
 
     !> 命令行参数
@@ -24,10 +25,10 @@ contains
         call args%set_program_name("to_f90")
         call args%add_help_option()
         call args%add_sc_option("-v", "--version", "show version information", show_version)
-        call args%add_option_string("-f", "--file", "input fixed-format file name", "main.f")
+        call args%add_argument_string("*.f", "input fixed-format file name")
         call args%parse()
 
-        self%input_file = trim(args%get_option_string("-f"))
+        self%input_file = unix_path(args%get_argument_string("*.f"))
 
     contains
 

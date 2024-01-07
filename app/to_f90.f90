@@ -7,7 +7,7 @@ program to_f90
     ! reason for not doing so?
     use to_f90_interfaced
     use to_f90_command_line, only: command_line_type
-    use to_f90_string, only: split
+    use to_f90_filesystem, only: change_suffix
     implicit none
 
     type :: code
@@ -42,10 +42,8 @@ program to_f90
     logical :: asterisk, ok, data_stmnt, first_arg, continuation
     type(argument), pointer :: arg_start, arg, last_arg
     type(command_line_type) :: command_line
-    character(:), allocatable :: split_text(:)
 
     call command_line%parse()
-    call split(command_line%input_file, ".f", split_text)
 
     f77_name = command_line%input_file
     if (len_trim(f77_name) == 0) stop
@@ -55,7 +53,7 @@ program to_f90
         stop
     end if
 
-    f90_name = trim(split_text(1))//'.f90'
+    f90_name = change_suffix(f77_name, 'f90')
     open (9, file=f90_name)
 
     ! set up a linked list containing the lines of code
