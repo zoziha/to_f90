@@ -25,7 +25,7 @@ program to_f90
         type(argument), pointer :: next
     end type argument
 
-    character(len=60) :: f77_name, f90_name
+    character(len=256) :: f77_name, f90_name
     character(len=1) :: tab = char(9), ch
     character(len=50) :: prog_unit_name = ' ', blank = ' ', case_expr
     character(len=9) :: delimiters = ' =+-*/,()'
